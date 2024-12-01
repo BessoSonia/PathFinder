@@ -8,8 +8,7 @@
 
 **Настройка в командной строке:**
 
-    Windows:
-      ```bash
-      set PATH_FINDER_TOKEN=ваш_токен_доступа
-      ```
-      
+Windows:
+    ```bash
+    set PATH_FINDER_TOKEN=ваш_токен_доступа
+    ```
