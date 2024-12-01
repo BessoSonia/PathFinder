@@ -4,8 +4,6 @@
 
 1. Настройте переменные окружения:
 
-    - PATH_FINDER_TOKEN: токен вашего Telegram-бота
-
     ```bash
     set PATH_FINDER_TOKEN=ваш_токен_доступа
     ```
