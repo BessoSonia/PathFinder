@@ -39,9 +39,9 @@ if not os.path.exists(CSV_FILE):
 def model_content():
     model = SentenceTransformer('paraphrase-multilingual-mpnet-base-v2')
 
-    # Генерация эмбеддингов для элективов (контентная фильтрация)
-    df = pd.read_csv("src\electives.csv")
-    df['text'] = df['Название курса'] + ' ' + df['Описание'] + ' ' + df['Направления']
+    # Загрузка данных из Excel
+    df = pd.read_excel("src/courses_combined_data.xlsx")  # Замените на правильное имя файла
+    df['text'] = df['Название на Отзывусе'] + ' ' + df['Образовательный результат'] + ' ' + df['Полное описание']
     df['text'] = df['text'].apply(preprocess_text_natasha)
     df['embeddings'] = list(model.encode(df['text'], show_progress_bar=True))
     return model, df
@@ -104,14 +104,14 @@ def predict_for_new_student(model_content, df, svd_model, actual_el, input_el, u
 
     # Генерация рекомендаций на основе коллаборативной фильтрации
     recommendations = []
-    for elective in df['Название курса']:
+    for elective in df['Название на Отзывусе']:
         # Исключаем уже пройденные элективы и предлагаем только актуальные элективы
         # if elective not in completed_electives and elective in actual_el:
         if elective not in completed_electives:
             prediction_svd = svd_model.predict(student_id, elective).est
 
             # Косинусное сходство для контентной фильтрации
-            elective_row = df[df['Название курса'] == elective]
+            elective_row = df[df['Название на Отзывусе'] == elective]
             elective_embedding = elective_row['embeddings'].values[0]
             similarity_to_query = cosine_similarity([query_embedding], [elective_embedding])[0][0]
 
@@ -194,11 +194,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i, (elective, score) in enumerate(recommendations[:5], 1):  # Топ-5 рекомендаций
             response_text += f"{i}. {elective}\n"
 
-        # response_text += "\nОцените, насколько вы довольны подобранными элективами (1-5)."
         await update.message.reply_text(response_text)
-
-        response_text = "\nОцените, насколько вы довольны подобранными элективами (1-5)."
-        await update.message.reply_text(response_text, reply_markup=FEEDBACK_KEYBOARD)
+        await update.message.reply_text(
+            "Оцените, насколько вы довольны подобранными элективами (1-5).",
+            reply_markup=FEEDBACK_KEYBOARD,
+        )
         return
 
     # Если бот ожидает первую оценку
@@ -219,37 +219,65 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif "relevance" not in USER_DATA[student_id]:
         if user_input in ["1", "2", "3", "4", "5"]:
             USER_DATA[student_id]["relevance"] = int(user_input)
-
-            # Сохраняем данные в CSV
-            save_feedback_to_csv(student_id, USER_DATA[student_id])
-
-            # Отправляем итоговое сообщение
             await update.message.reply_text(
-                "Спасибо за обратную связь! Вот ваши оценки:\n"
-                f"Удовлетворённость: {USER_DATA[student_id]['satisfaction']}/5\n"
-                f"Соответствие запросу: {USER_DATA[student_id]['relevance']}/5\n"
-                "Если хотите начать заново, введите /start."
+                "Что вам понравилось или не понравилось в работе бота? Напишите, что можно улучшить:"
             )
+            USER_DATA[student_id]["awaiting_feedback"] = True
         else:
             await update.message.reply_text(
                 "Пожалуйста, введите число от 1 до 5.", reply_markup=FEEDBACK_KEYBOARD
             )
         return
 
+    # Если бот ожидает отзыв в свободной форме
+    elif USER_DATA[student_id].get("awaiting_feedback"):
+        USER_DATA[student_id]["feedback"] = user_input
+        del USER_DATA[student_id]["awaiting_feedback"]
+
+        # Сохраняем данные в CSV
+        save_feedback_to_csv(student_id, USER_DATA[student_id])
+
+        # Отправляем итоговое сообщение
+        await update.message.reply_text(
+            "Спасибо за обратную связь! Вот ваши оценки:\n"
+            f"Удовлетворённость: {USER_DATA[student_id]['satisfaction']}/5\n"
+            f"Соответствие запросу: {USER_DATA[student_id]['relevance']}/5\n"
+            f"Ваш отзыв: {USER_DATA[student_id]['feedback']}\n"
+            "Если хотите начать заново, введите /start."
+        )
+        return
+
+
 
 
 # Сохранение данных в CSV
+# def save_feedback_to_csv(student_id, data):
+#     with open(CSV_FILE, "a", newline="", encoding="utf-8") as file:
+#         writer = csv.writer(file)
+#         writer.writerow([
+#             student_id,
+#             data["interests"],
+#             "; ".join([f"{rec[0]} ({rec[1]:.2f})" for rec in data["recommendations"][:5]]),
+#             data["satisfaction"],
+#             data["relevance"],
+#         ])
 def save_feedback_to_csv(student_id, data):
-    with open(CSV_FILE, "a", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        writer.writerow([
-            student_id,
-            data["interests"],
-            "; ".join([f"{rec[0]} ({rec[1]:.2f})" for rec in data["recommendations"][:5]]),
-            data["satisfaction"],
-            data["relevance"],
-        ])
+    file_path = "feedback.csv"
+    fieldnames = ["student_id", "satisfaction", "relevance", "feedback"]
+    write_header = not os.path.exists(file_path)
 
+    with open(file_path, mode="a", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+
+        if write_header:
+            writer.writeheader()
+
+        writer.writerow({
+            "student_id": student_id,
+            "satisfaction": data["satisfaction"],
+            "relevance": data["relevance"],
+            "feedback": data.get("feedback", ""),
+        })
 
 def main():
     application = ApplicationBuilder().token(token).build()
