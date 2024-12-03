@@ -106,8 +106,8 @@ def predict_for_new_student(model_content, df, svd_model, actual_el, input_el, u
     recommendations = []
     for elective in df['Название на Отзывусе']:
         # Исключаем уже пройденные элективы и предлагаем только актуальные элективы
-        # if elective not in completed_electives and elective in actual_el:
-        if elective not in completed_electives:
+        if elective not in completed_electives and elective in actual_el:
+        # if elective not in completed_electives:
             prediction_svd = svd_model.predict(student_id, elective).est
 
             # Косинусное сходство для контентной фильтрации
