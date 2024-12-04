@@ -1,21 +1,20 @@
 import pandas as pd
+import numpy as np
+import pickle
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
-from surprise import SVD, Dataset, Reader
-from surprise.model_selection import train_test_split
-from natasha import Segmenter, MorphVocab, Doc
+from natasha import Segmenter, Doc
 import csv
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import os
 from datetime import datetime
 
 
-token = os.getenv("PATH_FINDER_TOKEN")
-
-# Инициализация компонентов Natasha для контентной фильтрации
-segmenter = Segmenter()
-morph_vocab = MorphVocab()
+'''
+Перемнные и методы для работы чат-бота
+'''
+token = os.getenv("API_KEY")
 
 # Хранилище состояний пользователя
 USER_DATA = {}
@@ -24,105 +23,6 @@ USER_DATA = {}
 FEEDBACK_KEYBOARD = ReplyKeyboardMarkup(
     [["1", "2", "3", "4", "5"]], one_time_keyboard=True, resize_keyboard=True
 )
-
-current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-CSV_FILE = f"feedback/feedback_{current_time}.csv"
-
-# Инициализация CSV-файла
-if not os.path.exists(CSV_FILE):
-    with open(CSV_FILE, "w", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        writer.writerow(["student_id", "interests", "recommendations", "satisfaction", "relevance"])
-
-
-# Инициализация модели для эмбеддингов
-def model_content():
-    model = SentenceTransformer('paraphrase-multilingual-mpnet-base-v2')
-
-    # Загрузка данных из Excel
-    df = pd.read_excel("src/courses_combined_data.xlsx")  # Замените на правильное имя файла
-    df['text'] = df['Название на Отзывусе'] + ' ' + df['Образовательный результат'] + ' ' + df['Полное описание']
-    df['text'] = df['text'].apply(preprocess_text_natasha)
-    df['embeddings'] = list(model.encode(df['text'], show_progress_bar=True))
-    return model, df
-
-
-# Функция для предварительной обработки текста
-def preprocess_text_natasha(text):
-    if not isinstance(text, str):
-        return ''
-    doc = Doc(text)
-    doc.segment(segmenter)
-    tokens = [token.text.lower() for token in doc.tokens if token.text.isalpha()]
-    return ' '.join(tokens)
-
-
-def model_colab():
-    # Чтение данных о пройденных элективах
-    X = pd.read_csv("src\electives_spring_2023_all.csv", delimiter=';')  # Данные
-    X = X.loc[:, ['Студент ФИО', 'РМУП 1 название', 'РМУП 2 название', 'РМУП 3 название', 'РМУП 4 название']]
-    X.fillna('', inplace=True)
-
-    # Список всех уникальных элективов
-    electives = X.drop('Студент ФИО', axis=1).values.flatten()
-    electives = [e for e in electives if e != '']  # Убираем пустые строки
-    electives = list(set(electives))  # Получаем уникальные элективы
-
-    # Создаем бинарную матрицу для коллаборативной фильтрации
-    student_electives = []
-
-    for _, row in X.iterrows():
-        student_elective = [1 if elective in row.values else 0 for elective in electives]
-        student_electives.append(student_elective)
-
-    X_binary = pd.DataFrame(student_electives, columns=electives)
-    X_binary.insert(0, 'student', X['Студент ФИО'])
-
-    # Преобразуем данные для работы с библиотекой Surprise
-    reader = Reader(rating_scale=(0, 1))
-    df_melted = X_binary.melt(id_vars='student', var_name='elective', value_name='completed')
-    data = Dataset.load_from_df(df_melted[['student', 'elective', 'completed']], reader)
-    trainset, testset = train_test_split(data, test_size=0.1, random_state=42)
-
-    # Инициализация и обучение модели коллаборативной фильтрации (SVD)
-    svd_model = SVD()
-    svd_model.fit(trainset)
-    return svd_model
-
-
-# Функция для предсказания
-def predict_for_new_student(model_content, df, svd_model, actual_el, input_el, user_query, student_id="new_student"):
-    # Обработка запроса пользователя для контентной фильтрации
-    user_query_processed = preprocess_text_natasha(user_query)
-    query_embedding = model_content.encode(user_query_processed)
-
-    # Вычисление косинусного сходства для контентной фильтрации
-    df['similarity'] = df['embeddings'].apply(lambda x: cosine_similarity([query_embedding], [x])[0][0])
-
-    # Преобразуем строку в список пройденных элективов
-    completed_electives = [e.strip() for e in input_el.split(",") if e.strip()]
-
-    # Генерация рекомендаций на основе коллаборативной фильтрации
-    recommendations = []
-    for elective in df['Название на Отзывусе']:
-        # Исключаем уже пройденные элективы и предлагаем только актуальные элективы
-        if elective not in completed_electives and elective in actual_el:
-        # if elective not in completed_electives:
-            prediction_svd = svd_model.predict(student_id, elective).est
-
-            # Косинусное сходство для контентной фильтрации
-            elective_row = df[df['Название на Отзывусе'] == elective]
-            elective_embedding = elective_row['embeddings'].values[0]
-            similarity_to_query = cosine_similarity([query_embedding], [elective_embedding])[0][0]
-
-            # Комбинированная оценка (контентная фильтрация + коллаборативная фильтрация)
-            final_score = 0.2 * prediction_svd + 0.8 * similarity_to_query
-
-            recommendations.append((elective, final_score))
-
-    # Сортируем рекомендации по комбинированной оценке
-    recommendations.sort(key=lambda x: x[1], reverse=True)
-    return recommendations
 
 
 # Команда /start
@@ -142,6 +42,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# Функция для формирования клавиатуры с кнопками "Назад" и "Вперед"
+def get_keyboard(current_page, total_pages):
+    keyboard = []
+    if current_page > 0:
+        keyboard.append(InlineKeyboardButton("⬅️ Назад", callback_data="prev"))
+    if current_page < total_pages - 1:
+        keyboard.append(InlineKeyboardButton("➡️ Вперед", callback_data="next"))
+    return InlineKeyboardMarkup([keyboard])
+
+
+
+
+
 # Обработка сообщений от пользователя
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     student_id = update.message.chat_id
@@ -153,7 +66,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     actual_el = context.bot_data.get("actual_el")
 
     if not model_content_data or not model_colab_model or not actual_el:
-        await update.message.reply_text("Ошибка: модели не инициализированы.")
+        print(model_content_data)
+        print(model_colab_model)
+        print(actual_el)
+        await update.message.reply_text("Ошибка: сервис временно недоступен.")
         return
 
     # Инициализация данных для нового пользователя
@@ -187,12 +103,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             interests,
             student_id=str(student_id)
         )
+
         USER_DATA[student_id]["recommendations"] = recommendations
 
         # Формируем текст ответа с рекомендациями
         response_text = f"На основе ваших интересов: {interests}\nВот рекомендованные элективы:\n"
-        for i, (elective, score) in enumerate(recommendations[:5], 1):  # Топ-5 рекомендаций
-            response_text += f"{i}. {elective}\n"
+        pages = []
+        page = response_text
+        for i, elective in recommendations:  # Топ-5 рекомендаций на странице
+            page += f"i. {i}. {elective}\n"
+            if (i + 1) % 5 == 0:
+                pages.append(page)
+                page = response_text
+
+        # Инициализация начальной страницы
+        current_page = 0
 
         await update.message.reply_text(response_text)
         await update.message.reply_text(
@@ -248,25 +173,91 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+'''
+Загрузка моделей и объявление сопутствующих методов
+'''
+# Инициализация компонентов Natasha для контентной фильтрации
+segmenter = Segmenter()
+
+# Функция для предварительной обработки текста
+def preprocess_text_natasha(text):
+    if not isinstance(text, str):
+        return ''
+    doc = Doc(text)
+    doc.segment(segmenter)
+    tokens = [token.text.lower() for token in doc.tokens if token.text.isalpha()]
+    return ' '.join(tokens)
 
 
-# Сохранение данных в CSV
-# def save_feedback_to_csv(student_id, data):
-#     with open(CSV_FILE, "a", newline="", encoding="utf-8") as file:
-#         writer = csv.writer(file)
-#         writer.writerow([
-#             student_id,
-#             data["interests"],
-#             "; ".join([f"{rec[0]} ({rec[1]:.2f})" for rec in data["recommendations"][:5]]),
-#             data["satisfaction"],
-#             data["relevance"],
-#         ])
+# Загрузка модели для эмбеддингов
+def load_model_content():
+    # Загрузка данных, эмбеддингов и модели
+    df = pd.read_csv("bot/courses_data.csv")
+    embeddings = np.load("bot/courses_embeddings.npy")
+    df['embeddings'] = list(embeddings)
+    model = SentenceTransformer("bot/sentence_transformer_model")
+    return model, df
+
+
+# Загрузка сохранённой модели SVD
+def load_model_colab():
+    with open("bot/svd_model.pkl", "rb") as f:
+        svd_model = pickle.load(f)
+    return svd_model
+
+
+# Функция для предсказания
+def predict_for_new_student(model_content, df, svd_model, actual_el, input_el, user_query, student_id="new_student"):
+    # Обработка запроса пользователя для контентной фильтрации
+    user_query_processed = preprocess_text_natasha(user_query)
+    query_embedding = model_content.encode(user_query_processed)
+
+    # Вычисление косинусного сходства для контентной фильтрации
+    df['similarity'] = df['embeddings'].apply(lambda x: cosine_similarity([query_embedding], [x])[0][0])
+
+    # Преобразуем строку в список пройденных элективов
+    completed_electives = [e.strip() for e in input_el.split(",") if e.strip()]
+
+    # Генерация рекомендаций на основе коллаборативной фильтрации
+    recommendations = []
+    for elective in df['Название на Отзывусе']:
+        # Исключаем уже пройденные элективы и предлагаем только актуальные элективы
+        # if elective not in completed_electives and elective in actual_el:
+        if elective not in completed_electives:
+            prediction_svd = svd_model.predict(student_id, elective).est
+
+            # Косинусное сходство для контентной фильтрации
+            elective_row = df[df['Название на Отзывусе'] == elective]
+            elective_embedding = elective_row['embeddings'].values[0]
+            similarity_to_query = cosine_similarity([query_embedding], [elective_embedding])[0][0]
+
+            # Комбинированная оценка (контентная фильтрация + коллаборативная фильтрация)
+            final_score = 0.2 * prediction_svd + 0.8 * similarity_to_query
+
+            recommendations.append((elective, final_score))
+
+    # Сортируем рекомендации по комбинированной оценке
+    recommendations.sort(key=lambda x: x[1], reverse=True)
+    return recommendations
+
+
+'''
+Создание CSV-файла для сохранения обратной связи
+'''
+current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+csv_file = f"feedback/feedback_{current_time}.csv"
+
+# Инициализация CSV-файла
+if not os.path.exists(csv_file):
+    with open(csv_file, "w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow(["student_id", "interests", "recommendations", "satisfaction", "relevance"])
+
 def save_feedback_to_csv(student_id, data):
-    file_path = "feedback.csv"
     fieldnames = ["student_id", "satisfaction", "relevance", "feedback"]
-    write_header = not os.path.exists(file_path)
+    write_header = not os.path.exists(csv_file)
 
-    with open(file_path, mode="a", encoding="utf-8", newline="") as file:
+    with open(csv_file, mode="a", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
 
         if write_header:
@@ -279,6 +270,10 @@ def save_feedback_to_csv(student_id, data):
             "feedback": data.get("feedback", ""),
         })
 
+
+'''
+Основной метод
+'''
 def main():
     application = ApplicationBuilder().token(token).build()
 
@@ -287,10 +282,10 @@ def main():
     application.bot_data["actual_el"] = list(actual_el.iloc[0])  # Список актуальных элективов
 
     # Инициализация моделей
-    print("Инициализация моделей...")
-    model_content_inst, df = model_content()
+    print("Загрузка моделей...")
+    model_content_inst, df = load_model_content()
     application.bot_data["model_content"] = {"model": model_content_inst, "df": df}
-    application.bot_data["svd_model"] = model_colab()
+    application.bot_data["svd_model"] = load_model_colab()
 
     print("Модели успешно инициализированы!")
 
