@@ -6,7 +6,7 @@ from sentence_transformers import SentenceTransformer
 from natasha import Segmenter, Doc
 import csv
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import os
 from datetime import datetime
 
@@ -52,7 +52,44 @@ def get_keyboard(current_page, total_pages):
     return InlineKeyboardMarkup([keyboard])
 
 
+# Обработчик нажатий на кнопки
+async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    query.answer()
 
+    # Получаем ID пользователя через query.from_user.id
+    student_id = query.from_user.id
+
+    # Проверяем, есть ли информация о текущей странице и списке страниц
+    if student_id not in USER_DATA or "pages" not in USER_DATA[student_id]:
+        await query.message.reply_text("Ошибка: данные пользователя не найдены.")
+        return
+
+    # Получаем текущую страницу и список страниц
+    current_page = USER_DATA[student_id].get("current_page", 0)
+    pages = USER_DATA[student_id]["pages"]
+
+    # Обрабатываем нажатие кнопок
+    if query.data == "next" and current_page < len(pages) - 1:
+        current_page += 1
+    elif query.data == "prev" and current_page > 0:
+        current_page -= 1
+
+    # Сохраняем новую текущую страницу
+    USER_DATA[student_id]["current_page"] = current_page
+
+    # Формируем текст для новой страницы
+    response_text = (
+            f"На основе ваших интересов: {USER_DATA[student_id]['interests']}\n"
+            "Вот рекомендованные элективы:\n" +
+            "\n".join([f"{idx + 1}. {el}" for idx, el in enumerate(pages[current_page], start=1)])
+    )
+
+    # Обновляем сообщение с новой страницей
+    await query.edit_message_text(
+        text=response_text,
+        reply_markup=get_keyboard(current_page, len(pages))
+    )
 
 
 # Обработка сообщений от пользователя
@@ -106,15 +143,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         USER_DATA[student_id]["recommendations"] = recommendations
 
-        # Формируем текст ответа с рекомендациями
-        response_text = f"На основе ваших интересов: {interests}\nВот рекомендованные элективы:\n"
+        # Разбиваем рекомендации на страницы (по 5 на странице)
         pages = []
-        page = response_text
-        for i, elective in recommendations:  # Топ-5 рекомендаций на странице
-            page += f"i. {i}. {elective}\n"
-            if (i + 1) % 5 == 0:
-                pages.append(page)
-                page = response_text
+        for i in range(0, len(recommendations), 5):
+            page = recommendations[i:i + 5]
+            pages.append(page)
+        USER_DATA[student_id]["pages"] = pages
+        USER_DATA[student_id]["current_page"] = 0
+
+        # Отправляем первую страницу
+        current_page = USER_DATA[student_id]["current_page"]
+        response_text = (
+                f"На основе ваших интересов: {interests}\n"
+                "Вот рекомендованные элективы:\n" +
+                "\n".join([f"{idx + 1}. {el}" for idx, el in enumerate(pages[current_page], start=1)])
+        )
+        await update.message.reply_text(
+            response_text,
+            reply_markup=get_keyboard(current_page, len(pages))
+        )
+        return
+
+        # # Формируем текст ответа с рекомендациями
+        # response_text = f"На основе ваших интересов: {interests}\nВот рекомендованные элективы:\n"
+        # pages = []
+        # page = response_text
+        # for i, elective in recommendations:  # Топ-5 рекомендаций на странице
+        #     page += f"i. {i}. {elective}\n"
+        #     if (i + 1) % 5 == 0:
+        #         pages.append(page)
+        #         page = response_text
 
         # Инициализация начальной страницы
         current_page = 0
@@ -292,6 +350,7 @@ def main():
     # Обработчики
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(handle_button))
 
     print("Бот запущен. Нажмите Ctrl+C для остановки.")
     application.run_polling()
