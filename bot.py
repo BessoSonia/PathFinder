@@ -14,7 +14,7 @@ from datetime import datetime
 '''
 Перемнные и методы для работы чат-бота
 '''
-token = os.getenv("API_KEY")
+token = os.getenv("PATH_FINDER_TOKEN")
 
 # Хранилище состояний пользователя
 USER_DATA = {}
@@ -134,7 +134,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Запрашиваем отзыв
             USER_DATA[student_id]["rating_step"] = "feedback"
             await update.message.reply_text(
-                "Спасибо за вашу оценку! Напишите, что вам понравилось или что можно улучшить:"
+                "Спасибо за вашу оценку! Напишите, что вам понравилось или что можно улучшить:",
+                reply_markup=None
             )
         else:
             await update.message.reply_text(
@@ -152,7 +153,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Отправляем итоговое сообщение
         await update.message.reply_text(
-            "Спасибо за обратную связь!\nЕсли хотите начать заново, введите /start."
+            "Спасибо за обратную связь!\nЕсли хотите начать заново, введите /start.",
+            reply_markup=None
         )
         return
 
@@ -160,7 +162,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "interests" not in USER_DATA[student_id]:
         USER_DATA[student_id]["interests"] = user_input
         await update.message.reply_text(
-            'Пожалуйста, введите элективы, которые вы уже прошли, через запятую (если у вас ещё не было элективов, отправьте "."):'
+            'Пожалуйста, введите элективы, которые вы уже прошли, через запятую (если у вас ещё не было элективов, отправьте "."):',
+            reply_markup=None
         )
         USER_DATA[student_id]["awaiting_completed"] = True
         return
@@ -208,12 +211,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Запрашиваем оценку
         USER_DATA[student_id]["awaiting_rating"] = True
         await update.message.reply_text(
-            "Пожалуйста, не забудьте оценить работу бота."
+            "Пожалуйста, не забудьте оценить работу бота.",
+            reply_markup=None
         )
         return
 
     # Если бот завершил основной сценарий и ждет новых команд
-    await update.message.reply_text("Неизвестная команда. Попробуйте /start для начала.")
+    await update.message.reply_text(
+        "Неизвестная команда. Попробуйте /start для начала.",
+        reply_markup=None
+    )
 
 
 '''
