@@ -20,7 +20,7 @@ token = os.getenv("API_KEY")
 USER_DATA = {}
 
 # Клавиатура для обратной связи
-FEEDBACK_KEYBOARD = ReplyKeyboardMarkup(
+feedback_keyboard = ReplyKeyboardMarkup(
     [["1", "2", "3", "4", "5"]], one_time_keyboard=True, resize_keyboard=True
 )
 
@@ -42,59 +42,74 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# Функция для формирования клавиатуры с кнопками "Назад" и "Вперед"
+# Функция для создания клавиатуры
 def get_keyboard(current_page, total_pages):
-    keyboard = []
-    if current_page > 0:
-        keyboard.append(InlineKeyboardButton("⬅️ Назад", callback_data="prev"))
-    if current_page < total_pages - 1:
-        keyboard.append(InlineKeyboardButton("➡️ Вперед", callback_data="next"))
-    return InlineKeyboardMarkup([keyboard])
+    # Создаем кнопки "Назад" и "Вперед"
+    navigation_buttons = [
+        InlineKeyboardButton("⬅️ Назад", callback_data="previous_page"),
+        InlineKeyboardButton("➡️ Вперед", callback_data="next_page"),
+    ]
+
+    # Кнопка "Оценить бот" вторая строка
+    feedback_button = [
+        InlineKeyboardButton("📝 Оценить бот", callback_data="feedback")
+    ]
+
+    # Формируем клавиатуру (первая строка для навигации, вторая для оценки)
+    keyboard = [
+        navigation_buttons,  # Кнопки "Назад" и "Вперед"
+        feedback_button,  # Кнопка "Оценить бот"
+    ]
+
+    return InlineKeyboardMarkup(keyboard)
 
 
-# Обработчик нажатий на кнопки
+# Пример функции, которая отправляет или редактирует сообщение с рекомендациями
+# Обработчик кнопок
 async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    query.answer()
+    await query.answer()  # Ответ на callback запрос (важно для Telegram API)
 
-    # Получаем ID пользователя через query.from_user.id
-    student_id = query.from_user.id
+    student_id = query.message.chat.id
 
-    # Проверяем, есть ли информация о текущей странице и списке страниц
-    if student_id not in USER_DATA or "pages" not in USER_DATA[student_id]:
-        await query.message.reply_text("Ошибка: данные пользователя не найдены.")
+    if query.data == "feedback":
+        # Когда пользователь нажимает на "Оценить бот"
+        await query.message.reply_text(
+            "Как вы оцениваете подбор элективов? (Оцените от 1 до 5)",
+            reply_markup=feedback_keyboard
+        )
+        USER_DATA[student_id]["awaiting_satisfaction"] = True  # Флаг для ожидания оценки
         return
 
-    # Получаем текущую страницу и список страниц
-    current_page = USER_DATA[student_id].get("current_page", 0)
+    # Обработчик для страницы вперед и назад
+    current_page = USER_DATA[student_id]["current_page"]
     pages = USER_DATA[student_id]["pages"]
 
-    # Обрабатываем нажатие кнопок
-    if query.data == "next" and current_page < len(pages) - 1:
-        current_page += 1
-    elif query.data == "prev" and current_page > 0:
-        current_page -= 1
+    if query.data == "next_page":
+        if current_page < len(pages) - 1:
+            USER_DATA[student_id]["current_page"] += 1
+            current_page = USER_DATA[student_id]["current_page"]
+    elif query.data == "previous_page":
+        if current_page > 0:
+            USER_DATA[student_id]["current_page"] -= 1
+            current_page = USER_DATA[student_id]["current_page"]
 
-    # Сохраняем новую текущую страницу
-    USER_DATA[student_id]["current_page"] = current_page
-
-    # Формируем текст для новой страницы
+    # Формируем текст для текущей страницы
     response_text = (
-            f"На основе ваших интересов: {USER_DATA[student_id]['interests']}\n"
-            "Вот рекомендованные элективы:\n" +
-            "\n".join([f"{idx + 1}. {el}" for idx, el in enumerate(pages[current_page], start=1)])
+            "Рекомендованные элективы на основе ваших интересов:\n" +
+            "\n".join([f"{5 * current_page + idx}. {el[0]}" for idx, el in enumerate(pages[current_page], start=1)])
     )
 
-    # Обновляем сообщение с новой страницей
+    # Обновляем сообщение с рекомендациями и кнопками
     await query.edit_message_text(
         text=response_text,
-        reply_markup=get_keyboard(current_page, len(pages))
+        reply_markup=get_keyboard(current_page, len(pages))  # Обновляем клавиатуру
     )
 
 
 # Обработка сообщений от пользователя
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    student_id = update.message.chat_id
+    student_id = update.message.chat.id
     user_input = update.message.text
 
     # Проверяем, есть ли данные о моделях
@@ -103,21 +118,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     actual_el = context.bot_data.get("actual_el")
 
     if not model_content_data or not model_colab_model or not actual_el:
-        print(model_content_data)
-        print(model_colab_model)
-        print(actual_el)
-        await update.message.reply_text("Ошибка: сервис временно недоступен.")
+        await update.message.reply_text("Ошибка: Сервис временно недоступен.")
         return
 
     # Инициализация данных для нового пользователя
     if student_id not in USER_DATA:
         USER_DATA[student_id] = {}
 
-    # Если пользователь ввёл запрос на подбор элективов
+    # Если бот ожидает оценку (1-5)
+    if USER_DATA[student_id].get("awaiting_rating"):
+        if user_input in ["1", "2", "3", "4", "5"]:
+            USER_DATA[student_id]["rating"] = int(user_input)
+            del USER_DATA[student_id]["awaiting_rating"]  # Завершаем этап оценки
+
+            # Запрашиваем отзыв
+            USER_DATA[student_id]["rating_step"] = "feedback"
+            await update.message.reply_text(
+                "Спасибо за вашу оценку! Напишите, что вам понравилось или что можно улучшить:"
+            )
+        else:
+            await update.message.reply_text(
+                "Пожалуйста, введите число от 1 до 5."
+            )
+        return
+
+    # Если бот ожидает отзыв
+    elif USER_DATA[student_id].get("rating_step") == "feedback":
+        USER_DATA[student_id]["feedback"] = user_input
+        del USER_DATA[student_id]["rating_step"]
+
+        # Сохраняем данные в CSV
+        save_feedback_to_csv(student_id, USER_DATA[student_id])
+
+        # Отправляем итоговое сообщение
+        await update.message.reply_text(
+            "Спасибо за обратную связь!\nЕсли хотите начать заново, введите /start."
+        )
+        return
+
+    # Если пользователь ввел запрос на подбор элективов
     if "interests" not in USER_DATA[student_id]:
         USER_DATA[student_id]["interests"] = user_input
         await update.message.reply_text(
-            'Пожалуйста, введите элективы, которые вы уже прошли, через запятую (если у вас ещё не было элективов отправьте "."):'
+            'Пожалуйста, введите элективы, которые вы уже прошли, через запятую (если у вас ещё не было элективов, отправьте "."):'
         )
         USER_DATA[student_id]["awaiting_completed"] = True
         return
@@ -154,81 +197,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Отправляем первую страницу
         current_page = USER_DATA[student_id]["current_page"]
         response_text = (
-                f"На основе ваших интересов: {interests}\n"
-                "Вот рекомендованные элективы:\n" +
-                "\n".join([f"{idx + 1}. {el}" for idx, el in enumerate(pages[current_page], start=1)])
+            "Рекомендованные элективы на основе ваших интересов:\n" +
+            "\n".join([f"{5 * current_page + idx}. {el[0]}" for idx, el in enumerate(pages[current_page], start=1)])
         )
         await update.message.reply_text(
             response_text,
             reply_markup=get_keyboard(current_page, len(pages))
         )
-        return
 
-        # # Формируем текст ответа с рекомендациями
-        # response_text = f"На основе ваших интересов: {interests}\nВот рекомендованные элективы:\n"
-        # pages = []
-        # page = response_text
-        # for i, elective in recommendations:  # Топ-5 рекомендаций на странице
-        #     page += f"i. {i}. {elective}\n"
-        #     if (i + 1) % 5 == 0:
-        #         pages.append(page)
-        #         page = response_text
-
-        # Инициализация начальной страницы
-        current_page = 0
-
-        await update.message.reply_text(response_text)
+        # Запрашиваем оценку
+        USER_DATA[student_id]["awaiting_rating"] = True
         await update.message.reply_text(
-            "Оцените, насколько вы довольны подобранными элективами (1-5).",
-            reply_markup=FEEDBACK_KEYBOARD,
+            "Пожалуйста, не забудьте оценить работу бота."
         )
         return
 
-    # Если бот ожидает первую оценку
-    elif "satisfaction" not in USER_DATA[student_id]:
-        if user_input in ["1", "2", "3", "4", "5"]:
-            USER_DATA[student_id]["satisfaction"] = int(user_input)
-            await update.message.reply_text(
-                "Спасибо! Теперь оцените, насколько подбор соответствует вашему запросу (1-5).",
-                reply_markup=FEEDBACK_KEYBOARD,
-            )
-        else:
-            await update.message.reply_text(
-                "Пожалуйста, введите число от 1 до 5.", reply_markup=FEEDBACK_KEYBOARD
-            )
-        return
-
-    # Если бот ожидает вторую оценку
-    elif "relevance" not in USER_DATA[student_id]:
-        if user_input in ["1", "2", "3", "4", "5"]:
-            USER_DATA[student_id]["relevance"] = int(user_input)
-            await update.message.reply_text(
-                "Что вам понравилось или не понравилось в работе бота? Напишите, что можно улучшить:"
-            )
-            USER_DATA[student_id]["awaiting_feedback"] = True
-        else:
-            await update.message.reply_text(
-                "Пожалуйста, введите число от 1 до 5.", reply_markup=FEEDBACK_KEYBOARD
-            )
-        return
-
-    # Если бот ожидает отзыв в свободной форме
-    elif USER_DATA[student_id].get("awaiting_feedback"):
-        USER_DATA[student_id]["feedback"] = user_input
-        del USER_DATA[student_id]["awaiting_feedback"]
-
-        # Сохраняем данные в CSV
-        save_feedback_to_csv(student_id, USER_DATA[student_id])
-
-        # Отправляем итоговое сообщение
-        await update.message.reply_text(
-            "Спасибо за обратную связь! Вот ваши оценки:\n"
-            f"Удовлетворённость: {USER_DATA[student_id]['satisfaction']}/5\n"
-            f"Соответствие запросу: {USER_DATA[student_id]['relevance']}/5\n"
-            f"Ваш отзыв: {USER_DATA[student_id]['feedback']}\n"
-            "Если хотите начать заново, введите /start."
-        )
-        return
+    # Если бот завершил основной сценарий и ждет новых команд
+    await update.message.reply_text("Неизвестная команда. Попробуйте /start для начала.")
 
 
 '''
@@ -323,8 +308,7 @@ def save_feedback_to_csv(student_id, data):
 
         writer.writerow({
             "student_id": student_id,
-            "satisfaction": data["satisfaction"],
-            "relevance": data["relevance"],
+            "satisfaction": data["rating"],
             "feedback": data.get("feedback", ""),
         })
 
