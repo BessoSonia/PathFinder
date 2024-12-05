@@ -13,3 +13,9 @@
     ```
     pip install -r requirements.txt
     ```
+
+3. Перед запуском создайте папки feedback и bot
+
+4. Запустите prepare_colab.py и prepare_embedding.py
+
+5. Запустите сам бот bot.py
