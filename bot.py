@@ -97,7 +97,13 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Формируем текст для текущей страницы
     response_text = (
             "Рекомендованные элективы на основе ваших интересов:\n" +
-            "\n".join([f"{5 * current_page + idx}. {el[0]}" for idx, el in enumerate(pages[current_page], start=1)])
+            "\n".join(
+                [
+                    f"{5 * current_page + idx}. {el[0]} \nМодеус: {el[2]}"
+                    + (f" \nОтзывус: {el[3]}" if el[3] else "")
+                    for idx, el in enumerate(pages[current_page], start=1)
+                ]
+            )
     )
 
     # Обновляем сообщение с рекомендациями и кнопками
@@ -161,20 +167,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Если пользователь ввел запрос на подбор элективов
     if "interests" not in USER_DATA[student_id]:
         USER_DATA[student_id]["interests"] = user_input
-        await update.message.reply_text(
-            'Пожалуйста, введите элективы, которые вы уже прошли, через запятую (если у вас ещё не было элективов, отправьте "."):',
-            reply_markup=None
-        )
-        USER_DATA[student_id]["awaiting_completed"] = True
-        return
+        # await update.message.reply_text(
+        #     'Пожалуйста, введите элективы, которые вы уже прошли, через запятую (если у вас ещё не было элективов, отправьте "."):',
+        #     reply_markup=None
+        # )
+        # USER_DATA[student_id]["awaiting_completed"] = True
+        # return
 
     # Если бот ожидает список пройденных элективов
-    elif USER_DATA[student_id].get("awaiting_completed"):
-        USER_DATA[student_id]["completed_electives"] = user_input
-        del USER_DATA[student_id]["awaiting_completed"]
+    # elif USER_DATA[student_id].get("awaiting_completed"):
+    #     USER_DATA[student_id]["completed_electives"] = user_input
+    #     del USER_DATA[student_id]["awaiting_completed"]
 
         # Генерация рекомендаций
-        completed_electives = USER_DATA[student_id]["completed_electives"]
+        # completed_electives = USER_DATA[student_id]["completed_electives"]
+        completed_electives = ''
         interests = USER_DATA[student_id]["interests"]
 
         recommendations = predict_for_new_student(
@@ -200,9 +207,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Отправляем первую страницу
         current_page = USER_DATA[student_id]["current_page"]
         response_text = (
-            "Рекомендованные элективы на основе ваших интересов:\n" +
-            "\n".join([f"{5 * current_page + idx}. {el[0]}" for idx, el in enumerate(pages[current_page], start=1)])
+                "Рекомендованные элективы на основе ваших интересов:\n" +
+                "\n".join(
+                    [
+                        f"{5 * current_page + idx}. {el[0]} \nМодеус: {el[2]}"
+                        + (f" \nОтзывус: {el[3]}" if not pd.isna(el[3]) else "")
+                        for idx, el in enumerate(pages[current_page], start=1)
+                    ]
+                )
         )
+
         await update.message.reply_text(
             response_text,
             reply_markup=get_keyboard(current_page, len(pages))
@@ -283,8 +297,10 @@ def predict_for_new_student(model_content, df, svd_model, actual_el, input_el, u
 
             # Комбинированная оценка (контентная фильтрация + коллаборативная фильтрация)
             final_score = 0.2 * prediction_svd + 0.8 * similarity_to_query
+            link_m = elective_row['Ссылка на Модеус'].values[0]
+            link_o = elective_row['Ссылка на Отзывус'].values[0]
 
-            recommendations.append((elective, final_score))
+            recommendations.append((elective, final_score, link_m, link_o))
 
     # Сортируем рекомендации по комбинированной оценке
     recommendations.sort(key=lambda x: x[1], reverse=True)
