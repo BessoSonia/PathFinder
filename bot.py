@@ -111,7 +111,7 @@ def create_response(pages, current_page):
             "\n".join(
                 [
                     f"{5 * current_page + idx}. {el[0]} \n🎓Модеус: {el[2]}"
-                    + (f" \n📘Отзывус: {el[3]}" if el[3] else "")
+                    + (f" \n📘Отзывус: {el[3]}" if not pd.isna(el[3]) else "")
                     for idx, el in enumerate(pages[current_page], start=1)
                 ]
             )
@@ -294,8 +294,6 @@ def predict_for_new_student(model_content, df, svd_model, available_el, input_el
     # Преобразуем строку в список пройденных элективов
     completed_electives_raw = [e.strip() for e in input_el.split(",") if e.strip()]
     completed_electives = map_electives(completed_electives_raw, available_el)
-    print(completed_electives_raw)
-    print(completed_electives)
 
     # Генерация рекомендаций на основе коллаборативной фильтрации
     recommendations = []
@@ -319,6 +317,7 @@ def predict_for_new_student(model_content, df, svd_model, available_el, input_el
 
     # Сортируем рекомендации по комбинированной оценке
     recommendations.sort(key=lambda x: x[1], reverse=True)
+    print(recommendations)
     return recommendations
 
 
