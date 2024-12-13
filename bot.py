@@ -9,12 +9,13 @@ from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKe
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import os
 from datetime import datetime
+from Levenshtein import ratio
 
 
 '''
 Перемнные и методы для работы чат-бота
 '''
-token = os.getenv("PATH_FINDER_TOKEN")
+token = os.getenv("API_KEY")
 
 # Хранилище состояний пользователя
 USER_DATA = {}
@@ -95,22 +96,43 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             current_page = USER_DATA[student_id]["current_page"]
 
     # Формируем текст для текущей страницы
-    response_text = (
-            "Рекомендованные элективы на основе ваших интересов:\n" +
-            "\n".join(
-                [
-                    f"{5 * current_page + idx}. {el[0]} \nМодеус: {el[2]}"
-                    + (f" \nОтзывус: {el[3]}" if el[3] else "")
-                    for idx, el in enumerate(pages[current_page], start=1)
-                ]
-            )
-    )
+    response_text = create_response(pages, current_page)
 
     # Обновляем сообщение с рекомендациями и кнопками
     await query.edit_message_text(
         text=response_text,
         reply_markup=get_keyboard(current_page, len(pages))  # Обновляем клавиатуру
     )
+
+
+def create_response(pages, current_page):
+    response_text = (
+            "Рекомендованные элективы на основе ваших интересов:\n" +
+            "\n".join(
+                [
+                    f"{5 * current_page + idx}. {el[0]} \n🎓Модеус: {el[2]}"
+                    + (f" \n📘Отзывус: {el[3]}" if el[3] else "")
+                    for idx, el in enumerate(pages[current_page], start=1)
+                ]
+            )
+    )
+    return response_text
+
+
+# Функция поиска схожести
+def map_electives(input_electives, db_electives, threshold=0.6):
+    results = {}
+    for input_elective in input_electives:
+        best_match = None
+        best_score = 0
+        for db_elective in db_electives:
+            score = ratio(input_elective.lower(), db_elective.lower())
+            if score > best_score:
+                best_match = db_elective
+                best_score = score
+        if best_score >= threshold:
+            results[input_elective] = best_match
+    return list(results.values())
 
 
 # Обработка сообщений от пользователя
@@ -121,9 +143,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Проверяем, есть ли данные о моделях
     model_content_data = context.bot_data.get("model_content")
     model_colab_model = context.bot_data.get("svd_model")
-    actual_el = context.bot_data.get("actual_el")
+    available_el = context.bot_data.get("available_el")
 
-    if not model_content_data or not model_colab_model or not actual_el:
+    if not model_content_data or not model_colab_model or not available_el:
         await update.message.reply_text("Ошибка: Сервис временно недоступен.")
         return
 
@@ -167,30 +189,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Если пользователь ввел запрос на подбор элективов
     if "interests" not in USER_DATA[student_id]:
         USER_DATA[student_id]["interests"] = user_input
-        # await update.message.reply_text(
-        #     'Пожалуйста, введите элективы, которые вы уже прошли, через запятую (если у вас ещё не было элективов, отправьте "."):',
-        #     reply_markup=None
-        # )
-        # USER_DATA[student_id]["awaiting_completed"] = True
-        # return
+        await update.message.reply_text(
+            'Введите элективы, которые вы уже прошли, через запятую \n* если у вас ещё не было элективов, отправьте "."',
+            reply_markup=None
+        )
+        USER_DATA[student_id]["awaiting_completed"] = True
+        return
 
     # Если бот ожидает список пройденных элективов
-    # elif USER_DATA[student_id].get("awaiting_completed"):
-    #     USER_DATA[student_id]["completed_electives"] = user_input
-    #     del USER_DATA[student_id]["awaiting_completed"]
+    elif USER_DATA[student_id].get("awaiting_completed"):
+        USER_DATA[student_id]["completed_electives"] = user_input
+        del USER_DATA[student_id]["awaiting_completed"]
 
         # Генерация рекомендаций
-        # completed_electives = USER_DATA[student_id]["completed_electives"]
-        completed_electives = ''
+        completed_electives = USER_DATA[student_id]["completed_electives"]
         interests = USER_DATA[student_id]["interests"]
 
         recommendations = predict_for_new_student(
-            model_content_data["model"],
-            model_content_data["df"],
-            model_colab_model,
-            actual_el,
-            completed_electives,
-            interests,
+            model_content=model_content_data["model"],
+            df=model_content_data["df"],
+            svd_model=model_colab_model,
+            available_el=available_el,
+            input_el=completed_electives,
+            user_query=interests,
             student_id=str(student_id)
         )
 
@@ -206,16 +227,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Отправляем первую страницу
         current_page = USER_DATA[student_id]["current_page"]
-        response_text = (
-                "Рекомендованные элективы на основе ваших интересов:\n" +
-                "\n".join(
-                    [
-                        f"{5 * current_page + idx}. {el[0]} \nМодеус: {el[2]}"
-                        + (f" \nОтзывус: {el[3]}" if not pd.isna(el[3]) else "")
-                        for idx, el in enumerate(pages[current_page], start=1)
-                    ]
-                )
-        )
+        response_text = create_response(pages, current_page)
 
         await update.message.reply_text(
             response_text,
@@ -271,7 +283,7 @@ def load_model_colab():
 
 
 # Функция для предсказания
-def predict_for_new_student(model_content, df, svd_model, actual_el, input_el, user_query, student_id="new_student"):
+def predict_for_new_student(model_content, df, svd_model, available_el, input_el, user_query, student_id="new_student"):
     # Обработка запроса пользователя для контентной фильтрации
     user_query_processed = preprocess_text_natasha(user_query)
     query_embedding = model_content.encode(user_query_processed)
@@ -280,7 +292,10 @@ def predict_for_new_student(model_content, df, svd_model, actual_el, input_el, u
     df['similarity'] = df['embeddings'].apply(lambda x: cosine_similarity([query_embedding], [x])[0][0])
 
     # Преобразуем строку в список пройденных элективов
-    completed_electives = [e.strip() for e in input_el.split(",") if e.strip()]
+    completed_electives_raw = [e.strip() for e in input_el.split(",") if e.strip()]
+    completed_electives = map_electives(completed_electives_raw, available_el)
+    print(completed_electives_raw)
+    print(completed_electives)
 
     # Генерация рекомендаций на основе коллаборативной фильтрации
     recommendations = []
@@ -342,9 +357,9 @@ def save_feedback_to_csv(student_id, data):
 def main():
     application = ApplicationBuilder().token(token).build()
 
-    # Чтение данных об актуальных элективах
-    actual_el = pd.read_csv("src\list_of_actual_electives.csv", delimiter=';', header=None)
-    application.bot_data["actual_el"] = list(actual_el.iloc[0])  # Список актуальных элективов
+    # Чтение файла Excel
+    available_el = pd.read_excel("src\courses_combined_data.xlsx")["Название на Отзывусе"].dropna().tolist()
+    application.bot_data["available_el"] = list(available_el)
 
     # Инициализация моделей
     print("Загрузка моделей...")
