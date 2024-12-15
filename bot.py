@@ -110,7 +110,7 @@ def create_response(pages, current_page):
             "Рекомендованные элективы на основе ваших интересов:\n" +
             "\n".join(
                 [
-                    f"{5 * current_page + idx}. {el[0]} \n🎓Модеус: {el[2]}"
+                    f"{3 * current_page + idx}. {el[0]} \n🎓Модеус: {el[2]}"
                     + (f" \n📘Отзывус: {el[3]}" if not pd.isna(el[3]) else "")
                     for idx, el in enumerate(pages[current_page], start=1)
                 ]
@@ -228,8 +228,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Разбиваем рекомендации на страницы (по 5 на странице)
         pages = []
-        for i in range(0, len(recommendations), 5):
-            page = recommendations[i:i + 5]
+        for i in range(0, len(recommendations), 3):
+            page = recommendations[i:i + 3]
             pages.append(page)
         USER_DATA[student_id]["pages"] = pages
         USER_DATA[student_id]["current_page"] = 0
