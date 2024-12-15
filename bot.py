@@ -187,7 +187,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Если пользователь ввел запрос на подбор элективов
-    if "interests" not in USER_DATA[student_id]:
+    # if "interests" not in USER_DATA[student_id]:
+    if not USER_DATA[student_id].get("interests"):
         USER_DATA[student_id]["interests"] = user_input
         await update.message.reply_text(
             'Введите элективы, которые вы уже прошли, через запятую \n* если у вас ещё не было элективов, отправьте "."',
@@ -214,6 +215,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_query=interests,
             student_id=str(student_id)
         )
+
+        if not recommendations:
+            USER_DATA[student_id]["interests"] = None
+            await update.message.reply_text(
+                "К сожалению, я не нашел подходящих элективов для вашего запроса. Пожалуйста, переформулируйте запрос.",
+                reply_markup=None
+            )
+            return
 
         USER_DATA[student_id]["recommendations"] = recommendations
 
@@ -307,6 +316,10 @@ def predict_for_new_student(model_content, df, svd_model, available_el, input_el
             elective_row = df[df['Название на Отзывусе'] == elective]
             elective_embedding = elective_row['embeddings'].values[0]
             similarity_to_query = cosine_similarity([query_embedding], [elective_embedding])[0][0]
+
+            # Если сходство ниже порога, то не добавляем электив в рекомендации
+            if similarity_to_query < 0.4:
+                continue
 
             # Комбинированная оценка (контентная фильтрация + коллаборативная фильтрация)
             final_score = 0.2 * prediction_svd + 0.8 * similarity_to_query
