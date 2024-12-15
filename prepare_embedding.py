@@ -21,9 +21,7 @@ def preprocess_text_natasha(text):
 
 # Загрузка данных из Excel
 df = pd.read_excel("src/courses_combined_data_actual_all.xlsx")  # Замените на правильное имя файла
-# df = pd.read_excel("src/courses_combined_data_actual.xlsx")  # Замените на правильное имя файла
-# df = df.dropna(subset=['Название на Отзывусе'])
-# df.reset_index(drop=True, inplace=True)
+
 df['text'] = df['Название на Отзывусе'] + ' ' + df['Образовательный результат'] + ' ' + df['Полное описание']
 df['text'] = df['text'].apply(preprocess_text_natasha)
 df['word_count'] = df['text'].apply(lambda x: len(x.split()))

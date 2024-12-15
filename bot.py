@@ -317,7 +317,6 @@ def predict_for_new_student(model_content, df, svd_model, available_el, input_el
 
     # Сортируем рекомендации по комбинированной оценке
     recommendations.sort(key=lambda x: x[1], reverse=True)
-    print(recommendations)
     return recommendations
 
 
